@@ -10,6 +10,7 @@ Key behaviors (defaults):
 - HTML pages are written as directories with index.html when the URL path is a "pretty" URL.
 - Rewrite internal links in HTML and CSS to be *relative* (works on GitHub Pages project sites).
 - Strip the Age Gate (18+) overlay code from saved HTML.
+- Redact phone numbers from saved HTML by default.
 - Add docs/.nojekyll for safer asset serving.
 """
 
@@ -93,6 +94,37 @@ def _sha1(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8", errors="strict")).hexdigest()
 
 
+def _redact_phone_numbers(text: str) -> str:
+    """Redact phone numbers in human-readable content.
+
+    Targets Russian-looking phone numbers with +7 or 8 prefix and 10 digits.
+    """
+
+    sep = r"(?:\s|\u00a0|&nbsp;|&#160;|\(|\)|-|\u2011|\u2013|\u2014|\u2212)*"
+    rx_plus7 = re.compile(r"\+7" + sep + r"\d{3}" + sep + r"\d{3}" + sep + r"\d{2}" + sep + r"\d{2}")
+    rx_plus7_compact = re.compile(r"\+7\d{10}")
+    rx_8 = re.compile(r"\b8" + sep + r"\d{3}" + sep + r"\d{3}" + sep + r"\d{2}" + sep + r"\d{2}")
+    rx_8_compact = re.compile(r"\b8\d{10}")
+
+    out = text
+    out = rx_plus7.sub("—", out)
+    out = rx_plus7_compact.sub("—", out)
+    out = rx_8.sub("—", out)
+    out = rx_8_compact.sub("—", out)
+
+    # Redact tel: URIs that may still contain the number.
+    out = re.sub(r"(?i)\btel:(?:\+7|8)[0-9\-()\s]+", "tel:", out)
+    return out
+
+
+def _strip_cloudflare_ip_block(html: str) -> str:
+    """Remove Cloudflare footer block that can contain IP info in archived pages."""
+    out = html
+    out = re.sub(r'(?is)<span[^>]*id="cf-footer-item-ip".*?</span>\s*', "", out)
+    out = re.sub(r"(?is)<script>\(function\(\)\{function d\(\).*?cf-footer-ip.*?</script>\s*", "", out)
+    return out
+
+
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
@@ -163,7 +195,7 @@ class CdxRecord:
     statuscode: str
 
 
-def fetch_cdx(domain: str) -> List[CdxRecord]:
+def fetch_cdx(domain: str, *, from_ts: Optional[str] = None, to_ts: Optional[str] = None) -> List[CdxRecord]:
     params = [
         ("url", f"{domain}/*"),
         ("output", "txt"),
@@ -172,6 +204,10 @@ def fetch_cdx(domain: str) -> List[CdxRecord]:
         ("collapse", "urlkey"),
         ("sort", "reverse"),
     ]
+    if from_ts:
+        params.append(("from", str(from_ts)))
+    if to_ts:
+        params.append(("to", str(to_ts)))
     url = CDX_ENDPOINT + "?" + urlencode(params)
     req = Request(url, headers={"User-Agent": "OpenCode/1.0"})
     with urlopen(req, timeout=60) as r:
@@ -415,10 +451,21 @@ def _ext_for_mime(mimetype: str) -> str:
     return ".bin"
 
 
+def _record_key_for_local_path(rec: CdxRecord) -> Tuple[str, int, int, int]:
+    """Higher is better when choosing one record per local path."""
+    u = urlsplit(rec.original)
+    query = u.query or ""
+    no_query = 1 if not query else 0
+    https = 1 if (u.scheme or "").lower() == "https" else 0
+    return (rec.timestamp, no_query, https, -len(query))
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--domain", default="dodmayak.org")
     p.add_argument("--out", default=os.path.abspath(os.getcwd()))
+    p.add_argument("--from-ts", default="", help="CDX 'from' (YYYY or YYYYMMDDhhmmss)")
+    p.add_argument("--to-ts", default="", help="CDX 'to' (YYYY or YYYYMMDDhhmmss)")
     p.add_argument("--delay", type=float, default=0.2)
     p.add_argument("--max", type=int, default=0, help="0 = no limit")
     p.add_argument("--keep-age-gate", action="store_true", help="Keep the Age Gate (18+) overlay code")
@@ -428,6 +475,8 @@ def main() -> int:
         help="Download Age Gate plugin assets and its wp-json endpoints",
     )
     p.add_argument("--no-rewrite", action="store_true", help="Do not rewrite HTML/CSS links")
+    p.add_argument("--overwrite", action="store_true", help="Overwrite existing files")
+    p.add_argument("--keep-phones", action="store_true", help="Do not redact phone numbers")
     args = p.parse_args()
 
     out_root = os.path.abspath(args.out)
@@ -439,7 +488,7 @@ def main() -> int:
     # GitHub Pages: avoid Jekyll ignoring folders.
     _write_text(os.path.join(docs_root, ".nojekyll"), "")
 
-    records = fetch_cdx(args.domain)
+    records = fetch_cdx(args.domain, from_ts=(args.from_ts or None), to_ts=(args.to_ts or None))
     if args.max and args.max > 0:
         records = records[: args.max]
 
@@ -448,15 +497,16 @@ def main() -> int:
 
     domain_set = {args.domain.lower(), ("www." + args.domain).lower()}
 
-    # Dedupe by local path (ignoring query strings) for simpler static hosting.
-    chosen: List[Tuple[CdxRecord, str]] = []
-    seen_paths: Set[str] = set()
+    # Pick the best snapshot per local path.
+    best_by_path: Dict[str, CdxRecord] = {}
     for r in records:
         lp = _local_path_for_original(r.original, r.mimetype)
-        if lp in seen_paths:
-            continue
-        seen_paths.add(lp)
-        chosen.append((r, lp))
+        prev = best_by_path.get(lp)
+        if prev is None or _record_key_for_local_path(r) > _record_key_for_local_path(prev):
+            best_by_path[lp] = r
+
+    chosen: List[Tuple[CdxRecord, str]] = [(rec, lp) for lp, rec in best_by_path.items()]
+    chosen.sort(key=lambda x: x[1])
 
     # Static filesystems cannot have both a file and a directory with the same name.
     # Example: /wp-json/oembed/1.0 and /wp-json/oembed/1.0/embed.
@@ -503,25 +553,28 @@ def main() -> int:
             try:
                 if os.path.exists(local_abs):
                     if os.path.isfile(local_abs):
-                        skipped += 1
-                        index_f.write(
-                            json.dumps(
-                                {
-                                    "original": rec.original,
-                                    "timestamp": rec.timestamp,
-                                    "mimetype": _norm_mime(rec.mimetype),
-                                    "statuscode": rec.statuscode,
-                                    "archived_url": archived_url,
-                                    "local_path": os.path.relpath(local_abs, out_root),
-                                    "skipped": True,
-                                },
-                                ensure_ascii=False,
+                        if not args.overwrite:
+                            skipped += 1
+                            index_f.write(
+                                json.dumps(
+                                    {
+                                        "original": rec.original,
+                                        "timestamp": rec.timestamp,
+                                        "mimetype": _norm_mime(rec.mimetype),
+                                        "statuscode": rec.statuscode,
+                                        "archived_url": archived_url,
+                                        "local_path": os.path.relpath(local_abs, out_root),
+                                        "skipped": True,
+                                    },
+                                    ensure_ascii=False,
+                                )
+                                + "\n"
                             )
-                            + "\n"
-                        )
-                        continue
-                    # Path exists but is not a file (likely a directory): treat as a conflict.
-                    raise IsADirectoryError(local_abs)
+                            continue
+                        # overwrite=True -> proceed and rewrite the file
+                    else:
+                        # Path exists but is not a file (likely a directory): treat as a conflict.
+                        raise IsADirectoryError(local_abs)
 
                 attempt = 0
                 while True:
@@ -552,6 +605,9 @@ def main() -> int:
                         text = _decode_text(data, headers.get("content-type", ""))
                         if not args.keep_age_gate:
                             text = strip_age_gate_html(text)
+                        text = _strip_cloudflare_ip_block(text)
+                        if not args.keep_phones:
+                            text = _redact_phone_numbers(text)
                         if not args.no_rewrite:
                             page_dir = os.path.dirname(local_abs)
                             text = rewrite_html(text, page_dir=page_dir, site_root=docs_root, domain_set=domain_set)
@@ -619,6 +675,8 @@ def main() -> int:
 
     stats = {
         "domain": args.domain,
+        "from_ts": args.from_ts or None,
+        "to_ts": args.to_ts or None,
         "out": out_root,
         "docs": os.path.relpath(docs_root, out_root),
         "total_records": len(records),
@@ -632,6 +690,8 @@ def main() -> int:
         "rewrite": not bool(args.no_rewrite),
         "keep_age_gate": bool(args.keep_age_gate),
         "include_age_gate_resources": bool(args.include_age_gate_resources),
+        "keep_phones": bool(args.keep_phones),
+        "overwrite": bool(args.overwrite),
     }
     _write_text(stats_path, json.dumps(stats, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(stats, ensure_ascii=False))
