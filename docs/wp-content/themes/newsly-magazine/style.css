@@ -1,0 +1,140 @@
+/* 
+Theme Name: Newsly Magazine
+Template: feather-magazine
+Text Domain: newsly-magazine
+Author: ThemeEverest
+Author URI: https://superbthemes.com/
+Theme URI: https://superbthemes.com/child-theme/newsly-magazine/
+Description: Newsly Magazine is a perfect WordPress theme for magazines, personal blogs, newspapers, product reviews, content publishers. It can be used for niche sites with curated content. It does not matter if you want to create a classic news website, online editorial magazine, a personal modern lifestyle blog, or an affiliate review website. Newsly Magazine offers limitless customization. The theme is a perfect combination of beautiful and professional. There is a ton of ad space, you can use the header widgets to place ads banners and Adsense in case you need to earn money as an affiliate - No matter if it is image ads advertisment or video advertising, all ad networks work such as Google DFP Ads, Adsense and more. Our theme is made for the search engines, so you can easily beat the other bloggers and newspapers in Google with our fast and SEO optimized theme. If you wish to start blogging about business or travel for example then our responsive and flexible design is perfect - It is elegant and you can make it dark, white, minimal, boxed, flat, clean, or advanced, and full of sidebar widgets if you wish. Being creative and setting up a theme have never been so simple.
+Version: 1.7
+Tested up to: 6.0
+Requires at least: 4.0
+Requires PHP: 4.0
+License: GNU General Public License v2 or later
+License URI: http://www.gnu.org/licenses/gpl-2.0.html
+Tags: theme-options, threaded-comments, translation-ready, sticky-post, footer-widgets, custom-background, custom-colors, custom-header, custom-logo, custom-menu, featured-image-header, featured-images, flexible-header, right-sidebar, one-column, two-columns, news, entertainment, blog
+*/
+
+* {
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+
+body {
+	font-size: 14px;
+	line-height: 150%;
+	font-family: 'Lato', 'helvetica neue', helvetica, arial, sans-serif;
+	color: #555555;
+}
+
+
+.site-description {
+	font-size: 16px;
+}
+
+
+#site-header {
+	background: #191919 !important;
+}
+
+
+.site-title a {
+	color:#fff;
+}
+
+
+.widget-header h3 {
+	color:#fff;
+	margin-top:20px;
+	margin-bottom:0;
+	font-weight:600;
+}
+
+
+.widget-header {
+	color:#fff;
+}
+
+
+h1,
+h2,
+h3, 
+h4,
+h5,
+h6 {
+	font-weight: bold;
+	margin-bottom: 12px;
+	color: #000;
+	font-family: 'Lato', 'helvetica neue', helvetica, arial, sans-serif;
+}
+
+
+
+
+.post.excerpt {
+	border-bottom:1px solid rgba(0, 0, 0, 0.06);
+}
+
+
+#site-header {
+	box-shadow:0px 0px 0px #fff;
+}
+
+
+span.entry-meta {
+	text-transform: uppercase;
+	font-style: normal;
+	margin:0;
+	font-weight:500;
+}
+
+
+#searchform #s,
+#woocommerce-product-search-field {
+	border: 1px solid #cccccc;
+	border-right: none;
+	font-size:14px;
+	font-family: 'Lato', 'helvetica neue', helvetica, arial, sans-serif;
+}
+
+.post.excerpt h2.title a {
+	font-weight:600;
+}
+
+
+.post.excerpt .post-content {
+	font-size: 15px;
+	color: #7b7b7b;
+}
+
+
+#searchform input[type="submit"],
+.woocommerce-product-search input[type="submit"] {
+	color: #fff;
+	height: 37px;
+	padding-bottom: 0;
+	padding-top: 0;
+	cursor: pointer;
+	transition: all 0.25s linear;
+	width: 29.6%;
+	font-family: 'Lato', 'helvetica neue', helvetica, arial, sans-serif;
+	border: 0;
+	font-size: 14px;
+}
+
+
+#site-header {
+	background:#333;
+}
+
+
+.primary-navigation, #navigation ul ul li, #navigation.mobile-menu-wrapper {
+	background:#000;
+}
+
+
+a#pull, #navigation .menu a, #navigation .menu a:hover, #navigation .menu .fa > a, #navigation .menu .fa > a, #navigation .toggle-caret{
+	color:#fff;
+	font-weight: 500;
+}
