@@ -9,6 +9,7 @@ Key behaviors (defaults):
 - Save files into ./docs/ preserving the original URL path.
 - HTML pages are written as directories with index.html when the URL path is a "pretty" URL.
 - Rewrite internal links in HTML and CSS to be *relative* (works on GitHub Pages project sites).
+- Strip the Age Gate (18+) overlay code from saved HTML.
 - Add docs/.nojekyll for safer asset serving.
 """
 
@@ -34,6 +35,54 @@ WAYBACK_BASE = "https://web.archive.org/web"
 
 
 RE_SKIP_SCHEMES = re.compile(r"^(?:mailto:|tel:|sms:|javascript:|data:|blob:|about:)", re.IGNORECASE)
+
+
+def is_age_gate_resource(original_url: str) -> bool:
+    """Return True if URL belongs to the Age Gate plugin or its wp-json endpoints."""
+    try:
+        path = (urlsplit(original_url).path or "").lower()
+    except Exception:
+        return False
+    return "/wp-content/plugins/age-gate/" in path or "/wp-json/age-gate/" in path
+
+
+_AG_QUOTE = r"['\"]"
+_AG_RE_TEMPLATE = re.compile(r'<template\s+id="tmpl-age-gate"\s*>.*?</template>\s*', re.IGNORECASE | re.DOTALL)
+_AG_RE_STYLE_ID = re.compile(
+    rf'<style\b[^>]*\bid={_AG_QUOTE}age-gate-[^>]*?{_AG_QUOTE}[^>]*>.*?</style>\s*',
+    re.IGNORECASE | re.DOTALL,
+)
+_AG_RE_LINK_ID = re.compile(rf'<link\b[^>]*\bid={_AG_QUOTE}age-gate-css{_AG_QUOTE}[^>]*>\s*', re.IGNORECASE)
+_AG_RE_SCRIPT_ID = re.compile(
+    rf'<script\b[^>]*\bid={_AG_QUOTE}age-gate-[^>]*?{_AG_QUOTE}[^>]*>.*?</script>\s*',
+    re.IGNORECASE | re.DOTALL,
+)
+_AG_RE_ANY_SCRIPT_ASSET = re.compile(
+    r'<script\b[^>]*\bsrc=["\"][^"\"]*wp-content/plugins/age-gate/[^"\"]*["\"][^>]*>.*?</script>\s*',
+    re.IGNORECASE | re.DOTALL,
+)
+_AG_RE_ANY_LINK_ASSET = re.compile(
+    r'<link\b[^>]*\bhref=["\"][^"\"]*wp-content/plugins/age-gate/[^"\"]*["\"][^>]*>\s*',
+    re.IGNORECASE,
+)
+_AG_RE_CUSTOM_CSS_BLOCK = re.compile(
+    r'\s*\.age-gate-submit-no\s*,\s*\.age-gate-submit-yes\s*\{.*?\}\s*',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def strip_age_gate_html(html: str) -> str:
+    """Remove Age Gate overlay code from WordPress-rendered HTML."""
+    out = html
+    out = _AG_RE_TEMPLATE.sub("", out)
+    out = _AG_RE_STYLE_ID.sub("", out)
+    out = _AG_RE_LINK_ID.sub("", out)
+    out = _AG_RE_SCRIPT_ID.sub("", out)
+    out = _AG_RE_ANY_SCRIPT_ASSET.sub("", out)
+    out = _AG_RE_ANY_LINK_ASSET.sub("", out)
+    out = _AG_RE_CUSTOM_CSS_BLOCK.sub("\n", out)
+    out = re.sub(r"\n{4,}", "\n\n\n", out)
+    return out
 
 
 def _norm_mime(m: str) -> str:
@@ -372,6 +421,12 @@ def main() -> int:
     p.add_argument("--out", default=os.path.abspath(os.getcwd()))
     p.add_argument("--delay", type=float, default=0.2)
     p.add_argument("--max", type=int, default=0, help="0 = no limit")
+    p.add_argument("--keep-age-gate", action="store_true", help="Keep the Age Gate (18+) overlay code")
+    p.add_argument(
+        "--include-age-gate-resources",
+        action="store_true",
+        help="Download Age Gate plugin assets and its wp-json endpoints",
+    )
     p.add_argument("--no-rewrite", action="store_true", help="Do not rewrite HTML/CSS links")
     args = p.parse_args()
 
@@ -387,6 +442,9 @@ def main() -> int:
     records = fetch_cdx(args.domain)
     if args.max and args.max > 0:
         records = records[: args.max]
+
+    if not args.include_age_gate_resources:
+        records = [r for r in records if not is_age_gate_resource(r.original)]
 
     domain_set = {args.domain.lower(), ("www." + args.domain).lower()}
 
@@ -487,13 +545,20 @@ def main() -> int:
                 mime = _norm_mime(headers.get("content-type", "")) or _norm_mime(rec.mimetype)
 
                 did_rewrite = False
-                if not args.no_rewrite and mime == "text/html":
-                    text = _decode_text(data, headers.get("content-type", ""))
-                    page_dir = os.path.dirname(local_abs)
-                    rewritten = rewrite_html(text, page_dir=page_dir, site_root=docs_root, domain_set=domain_set)
-                    _write_text(local_abs, rewritten)
-                    rewritten_html += 1
-                    did_rewrite = True
+                if mime == "text/html":
+                    if args.no_rewrite and args.keep_age_gate:
+                        _write_bytes(local_abs, data)
+                    else:
+                        text = _decode_text(data, headers.get("content-type", ""))
+                        if not args.keep_age_gate:
+                            text = strip_age_gate_html(text)
+                        if not args.no_rewrite:
+                            page_dir = os.path.dirname(local_abs)
+                            text = rewrite_html(text, page_dir=page_dir, site_root=docs_root, domain_set=domain_set)
+                            rewritten_html += 1
+                            did_rewrite = True
+                        _write_text(local_abs, text)
+
                 elif not args.no_rewrite and mime == "text/css":
                     text = _decode_text(data, headers.get("content-type", ""))
                     css_dir = os.path.dirname(local_abs)
@@ -565,6 +630,8 @@ def main() -> int:
         "rewritten_css": rewritten_css,
         "seconds": round(time.time() - start, 3),
         "rewrite": not bool(args.no_rewrite),
+        "keep_age_gate": bool(args.keep_age_gate),
+        "include_age_gate_resources": bool(args.include_age_gate_resources),
     }
     _write_text(stats_path, json.dumps(stats, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(stats, ensure_ascii=False))
