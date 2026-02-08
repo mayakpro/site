@@ -6682,3 +6682,15 @@ div[id*="leyka-pf-"] .inpage-card__thumb {
 .knd-event__booking .em-login-trigger {
 	display: none;
 }
+
+/* Site mirror overrides */
+.knd-social-links li.vk {
+	display: none !important;
+}
+
+@media (max-width: 767px) {
+	.knd-block-hero__figure > img {
+		max-height: none;
+		height: auto;
+	}
+}
